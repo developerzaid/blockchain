@@ -14,62 +14,74 @@ contract CrowdFunding {
     }
 
     mapping(uint256 => Campaign) public campaigns;
-
     uint256 public numberOfCampaigns = 0;
 
-    function createCampaign(address _owner, string memory _title, string memory _description, uint256 _target, uint256 _deadline) public returns (uint256) {
-        Campaign storage campaign = campaigns[numberOfCampaigns];
+    // Events
+    event CampaignCreated(uint256 indexed campaignId);
+    event DonationReceived(uint256 indexed campaignId, address donor, uint256 amount);
+    event DonationSent(address to, uint256 amount);
 
-        require(campaign.deadline < block.timestamp, "The deadline should be a date in the future.");
-
-        campaign.owner = _owner;
-        campaign.title = _title;
-        campaign.description = _description;
-        campaign.target = _target;
-        campaign.deadline = _deadline;
-        campaign.amountCollected = 0;
-
-        numberOfCampaigns++;
-
-        return numberOfCampaigns - 1;
+    // Modifier to check if the caller is the campaign owner
+    modifier isOwner(uint256 campaignId) {
+        require(msg.sender == campaigns[campaignId].owner, "Caller is not the campaign owner");
+        _;
     }
 
+    // Function to create a new campaign
+    function createCampaign(address _owner, string memory _title, string memory _description, uint256 _target, uint256 _deadline) public {
+        require(_deadline > block.timestamp, "The deadline should be a date in the future.");
+
+        Campaign storage newCampaign = campaigns[numberOfCampaigns];
+        newCampaign.owner = _owner;
+        newCampaign.title = _title;
+        newCampaign.description = _description;
+        newCampaign.target = _target;
+        newCampaign.deadline = _deadline;
+        newCampaign.amountCollected = 0;
+
+        emit CampaignCreated(numberOfCampaigns);
+        numberOfCampaigns++;
+    }
+
+    // Function to donate to a campaign
     function donateToCampaign(uint256 _id) public payable {
-        uint256 amount = msg.value;
+        require(_id < numberOfCampaigns, "Campaign does not exist");
+        require(block.timestamp < campaigns[_id].deadline, "The campaign deadline has passed");
+        require(msg.value > 0, "Donation must be greater than 0");
 
         Campaign storage campaign = campaigns[_id];
-
         campaign.donators.push(msg.sender);
-        campaign.donations.push(amount);
+        campaign.donations.push(msg.value);
+        campaign.amountCollected += msg.value;
 
-        (bool sent,) = payable(campaign.owner).call{value: amount}("");
+        emit DonationReceived(_id, msg.sender, msg.value);
 
-        if(sent) {
-            campaign.amountCollected = campaign.amountCollected + amount;
-        }
+        // Transfer the donation to the owner
+        (bool sent,) = payable(campaign.owner).call{value: msg.value}("");
+        require(sent, "Failed to send Ether to the campaign owner");
+        emit DonationSent(campaign.owner, msg.value);
     }
 
-    function getDonators(uint256 _id) view public returns (address[] memory, uint256[] memory) {
+    // Function to get donators and donations for a campaign
+    function getDonators(uint256 _id) public view returns (address[] memory, uint256[] memory) {
+        require(_id < numberOfCampaigns, "Campaign does not exist");
         return (campaigns[_id].donators, campaigns[_id].donations);
     }
 
+    // Function to get all campaigns
     function getCampaigns() public view returns (Campaign[] memory) {
         Campaign[] memory allCampaigns = new Campaign[](numberOfCampaigns);
-
-        for(uint i = 0; i < numberOfCampaigns; i++) {
-            Campaign storage item = campaigns[i];
-
-            allCampaigns[i] = item;
+        for (uint i = 0; i < numberOfCampaigns; i++) {
+            allCampaigns[i] = campaigns[i];
         }
-
         return allCampaigns;
     }
 
-    //TEST
-    function send(address to) external payable {
-        (bool success,) = to.call{value: msg.value}("");
-        if (!success) {
-            revert("Failed to send ETH");
-        }
+    // Testing utility function (for external use only)
+    function send(address to, uint256 amount) external payable {
+        require(msg.value >= amount, "Not enough Ether provided");
+        (bool success,) = to.call{value: amount}("");
+        require(success, "Failed to send Ether");
+        emit DonationSent(to, amount);
     }
 }
